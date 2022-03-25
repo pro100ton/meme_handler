@@ -11,11 +11,6 @@ load_dotenv()
 TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHEEKE_BREEKE = os.getenv('CHANNEL_ID')
 
-# bot = Bot(TOKEN)
-# updates = bot.get_updates()
-# bot.send_message(text='pipiska', chat_id=CHEEKE_BREEKE)
-# print(updates[0])
-
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 updater = Updater(token=TOKEN)
@@ -39,12 +34,7 @@ def help_handler(update: Update, context: CallbackContext):
 
 
 def start_conversation(update: Update, context: CallbackContext) -> int:
-    # username, name = update.message.from_user["username"], update.message.from_user["first_name"]
-    # print(username)
-    # print(name)
-    # print(update.message.from_user)
     context.user_data["meme_id"] = None
-    # print(context.user_data.get("meme_id", "No meme id"))
     context.bot.send_message(chat_id=update.effective_chat.id, text="Please, upload much SUS meme")
     return MEME
 
@@ -85,15 +75,8 @@ def name_confirm(update: Update, context: CallbackContext):
 
 
 def handle_uploaded_meme(update: Update, context: CallbackContext) -> int:
-    # username, name = update.message.from_user["username"], update.message.from_user["first_name"]
     file_id = update.message.photo[0]["file_id"]
     context.user_data["meme_id"] = file_id
-    # photo_file = update.message.photo[-1].get_file()
-    # photo_file.download('user_photo.jpg')
-    # p = Path(__file__).with_name('user_photo.jpg')
-    # with p.open('rb') as f:
-    # context.bot.send_photo(chat_id=CHEEKE_BREEKE, photo=file_id, caption=f"From: {name}, with {username}")
-    # context.bot.send_message(chat_id=CHEEKE_BREEKE, text=f"From: {name}, with {username}")
     context.bot.send_message(chat_id=update.effective_chat.id,
                              text="Do you want to be sneaky anonymous?",
                              reply_markup=markup)
