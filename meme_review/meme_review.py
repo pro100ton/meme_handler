@@ -3,6 +3,7 @@ import os
 
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
+from queue_manager.meme_queue import manage_meme_queue
 
 START, REVIEW = range(2)
 ADMIN_CHAT = os.getenv('ADMIN_CHAT_ID')
@@ -36,10 +37,11 @@ def review_next(update: Update, context: CallbackContext) -> int:
     queued_memes = context.bot_data.get("queued_memes")
     posted_memes = context.bot_data.get("post_memes")
     current_meme = context.bot_data.get("current_meme")
+    print(posted_memes)
     if update.message.text == 'Approve':
         # Remove from queue and add to posts file
         queued_memes.pop(0)
-        posted_memes.append(current_meme)
+        posted_memes = manage_meme_queue(posted_memes, current_meme)
         if current_meme["person_chat_id"] != ADMIN_CHAT:
             context.bot.send_message(chat_id=current_meme["person_chat_id"],
                                      text="Congratulations, one of your memes has been approved")
@@ -54,7 +56,7 @@ def review_next(update: Update, context: CallbackContext) -> int:
         with open('queue.json', 'w') as json_file:
             json_file.write('[]')
         with open('posts.json', 'w', encoding='utf-8') as json_file:
-            json.dump(posted_memes, json_file, ensure_ascii=False)
+            json.dump(posted_memes, json_file, ensure_ascii=False, default=str)
         return ConversationHandler.END
     current_meme = queued_memes[0]
     # Set new values for the review data
@@ -84,9 +86,7 @@ def stop_bot(update: Update, context: CallbackContext):
 REVIEW_CONVERSATION_HANDLER = ConversationHandler(
     entry_points=[CommandHandler('start_review', review_start)],
     states={
-        START: [
-            MessageHandler(Filters.regex('^(Approve|Decline)$') & (~Filters.command), review_next),
-        ],
+        START: [MessageHandler(Filters.regex('^(Approve|Decline)$') & (~Filters.command), review_next)],
         ConversationHandler.TIMEOUT: [MessageHandler(Filters.text | Filters.command, timeout)],
     },
     fallbacks=[CommandHandler('stop', stop_bot)],

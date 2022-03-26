@@ -134,3 +134,4 @@ telebot/
 
 posts.json
 queue.json
+sandbox.py

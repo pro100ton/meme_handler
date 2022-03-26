@@ -1,6 +1,9 @@
 import json
 import logging
 import os
+import signal
+import sys
+import threading
 from meme_review.meme_review import REVIEW_CONVERSATION_HANDLER
 
 from dotenv import load_dotenv
@@ -113,7 +116,7 @@ def main() -> None:
     dispatcher.add_handler(REVIEW_CONVERSATION_HANDLER)
     dispatcher.add_handler(MessageHandler((~Filters.command), help_handler))
     updater.start_polling()
-
+    updater.idle()
 
 if __name__ == '__main__':
     main()
