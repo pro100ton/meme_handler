@@ -1,14 +1,12 @@
 import json
 import logging
 import os
-import signal
-import sys
-import threading
-from meme_review.meme_review import REVIEW_CONVERSATION_HANDLER
+import datetime
 
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
+from queue_manager.meme_queue import manage_meme_queue
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler, Job
 
 load_dotenv()
 TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -17,9 +15,11 @@ CHEEKE_BREEKE = os.getenv('CHANNEL_ID')
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 updater = Updater(token=TOKEN)
+job_queue = updater.job_queue
 dispatcher = updater.dispatcher
 
-MEME, ANON = range(2)
+MEME, ANON, START, REVIEW = range(4)
+ADMIN_CHAT = os.getenv('ADMIN_CHAT_ID')
 anon_keyboard = [
     ['Yes', 'No']
 ]
@@ -37,6 +37,11 @@ def help_handler(update: Update, context: CallbackContext):
 
 
 def start_conversation(update: Update, context: CallbackContext) -> int:
+    for job in job_queue.jobs():
+        print(job.context)
+        print(job.name)
+        print(job.job_queue)
+        print(job.callback)
     context.user_data["meme_id"] = None
     context.bot.send_message(chat_id=update.effective_chat.id, text="Please, upload much SUS meme")
     return MEME
@@ -50,7 +55,9 @@ def wrong_data(update: Update, context: CallbackContext) -> int:
 
 def wrong_answer(update: Update, context: CallbackContext) -> int:
     context.bot.send_message(chat_id=update.effective_chat.id,
-                             text="Please, say 'yes' or 'no' (or /stop to stop suggestion)")
+                             text="Please, say 'yes' or 'no' (or /stop to stop suggestion)\n"
+                                  "Also you allowed to provide only one meme per suggestion, "
+                                  "so if you sent more than one - than only first one will be sent to review")
     return ANON
 
 
@@ -95,6 +102,95 @@ def timeout(update, context):
     update.message.reply_text('You were AFK for too long, to provide SUS memes please start over')
 
 
+# MEME REVIEW HANDLERS
+def review_start(update: Update, context: CallbackContext) -> int:
+    with open('queue.json') as json_file:
+        context.bot_data["queued_memes"] = json.load(json_file)
+    if len(context.bot_data["queued_memes"]) == 0 or context.bot_data["queued_memes"] == "[]":
+        context.bot.send_message(chat_id=update.effective_chat.id, text="No memes left for review")
+        return ConversationHandler.END
+    else:
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Next meme:")
+    with open('posts.json') as json_file:
+        context.bot_data["post_memes"] = json.load(json_file)
+    review_keyboard = [
+        ['Approve', 'Decline']
+    ]
+    review_markup = ReplyKeyboardMarkup(review_keyboard, one_time_keyboard=True)
+    context.bot_data["current_meme"] = context.bot_data.get("queued_memes")[0]
+    current_meme = context.bot_data.get("current_meme")
+    context.bot.send_photo(chat_id=update.effective_chat.id,
+                           photo=current_meme["meme"],
+                           caption=f"Sender: {current_meme['username']} : {current_meme['first_name']}\nAnonymous: {current_meme['anon']}",
+                           reply_markup=review_markup)
+    return START
+
+
+def post_meme_on_schedule(context: CallbackContext):
+    message = context.job.context[0]
+    if message["anon"]:
+        tmp_caption = f"#Предложка от анонимуса"
+    else:
+        tmp_caption = f"#Предложка от @{message['username']}"
+    context.bot.send_photo(chat_id=CHEEKE_BREEKE,
+                           photo=message["meme"],
+                           caption=tmp_caption)
+
+
+def review_next(update: Update, context: CallbackContext) -> int:
+    # Getting necessary data
+    queued_memes = context.bot_data.get("queued_memes")
+    posted_memes = context.bot_data.get("post_memes")
+    current_meme = context.bot_data.get("current_meme")
+    print(posted_memes)
+    if update.message.text == 'Approve':
+        # Remove from queue and add to posts file
+        queued_memes.pop(0)
+        posted_memes = manage_meme_queue(posted_memes, current_meme)
+        # Add new queued task
+        post_time = datetime.datetime.strptime(posted_memes[-1]["post_time"], "%Y-%m-%d %H:%M:%S")
+        job_queue.run_once(post_meme_on_schedule, post_time, context=(current_meme,))
+        if current_meme["person_chat_id"] != ADMIN_CHAT:
+            context.bot.send_message(chat_id=current_meme["person_chat_id"],
+                                     text="Congratulations, one of your memes has been approved")
+    elif update.message.text == 'Decline':
+        # Remove from queue file
+        queued_memes.pop(0)
+        if current_meme["person_chat_id"] != ADMIN_CHAT:
+            context.bot.send_message(chat_id=current_meme["person_chat_id"],
+                                     text="Unforch, but one of your memes has been declined:(")
+    if len(queued_memes) == 0:
+        context.bot.send_message(chat_id=update.effective_chat.id, text="That was the last meme")
+        with open('queue.json', 'w') as json_file:
+            json_file.write('[]')
+        with open('posts.json', 'w', encoding='utf-8') as json_file:
+            json.dump(posted_memes, json_file, ensure_ascii=False, default=str)
+        return ConversationHandler.END
+    current_meme = queued_memes[0]
+    # Set new values for the review data
+    context.bot_data["queued_memes"] = queued_memes
+    context.bot_data["post_memes"] = posted_memes
+    context.bot_data["current_meme"] = current_meme
+    review_keyboard = [
+        ['Approve', 'Decline']
+    ]
+    review_markup = ReplyKeyboardMarkup(review_keyboard, one_time_keyboard=True)
+    context.bot.send_photo(chat_id=update.effective_chat.id,
+                           photo=current_meme["meme"],
+                           caption=f"Sender: {current_meme['username']} : {current_meme['first_name']}\nAnonymous: {current_meme['anon']}",
+                           reply_markup=review_markup)
+    return START
+
+
+def review_timeout(update, context):
+    update.message.reply_text('You were AFK for too long, you may continue review again later')
+
+
+def review_stop_bot(update: Update, context: CallbackContext):
+    context.bot.send_message(chat_id=update.effective_chat.id, text="Meme review stopped")
+    return ConversationHandler.END
+
+
 def main() -> None:
     conversation_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start_conversation)],
@@ -112,11 +208,21 @@ def main() -> None:
         fallbacks=[CommandHandler('stop', stop_bot)],
         conversation_timeout=360
     )
+    meme_review_conversation_handler = ConversationHandler(
+        entry_points=[CommandHandler('start_review', review_start)],
+        states={
+            START: [MessageHandler(Filters.regex('^(Approve|Decline)$') & (~Filters.command), review_next)],
+            ConversationHandler.TIMEOUT: [MessageHandler(Filters.text | Filters.command, review_timeout)],
+        },
+        fallbacks=[CommandHandler('stop', review_stop_bot)],
+        conversation_timeout=360
+    )
     dispatcher.add_handler(conversation_handler)
-    dispatcher.add_handler(REVIEW_CONVERSATION_HANDLER)
+    dispatcher.add_handler(meme_review_conversation_handler)
     dispatcher.add_handler(MessageHandler((~Filters.command), help_handler))
     updater.start_polling()
     updater.idle()
+
 
 if __name__ == '__main__':
     main()
