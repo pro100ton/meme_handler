@@ -2,6 +2,8 @@ import json
 import logging
 import os
 import datetime
+import pytz
+from time import timezone
 
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup
@@ -17,6 +19,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 updater = Updater(token=TOKEN)
 job_queue = updater.job_queue
 dispatcher = updater.dispatcher
+TIMEZONE = pytz.timezone('Europe/Moscow')
 
 MEME, ANON, START, REVIEW = range(4)
 ADMIN_CHAT = os.getenv('ADMIN_CHAT_ID')
@@ -36,12 +39,19 @@ def help_handler(update: Update, context: CallbackContext):
                              reply_markup=start_markup)
 
 
+def post_meme_on_schedule(context: CallbackContext):
+    logging.warning("TASK TRIGGERED")
+    message = context.job.context[0]
+    if message["anon"]:
+        tmp_caption = f"#Предложка от анонимуса"
+    else:
+        tmp_caption = f"#Предложка от @{message['username']}"
+    context.bot.send_photo(chat_id=CHEEKE_BREEKE,
+                           photo=message["meme"],
+                           caption=tmp_caption)
+
+
 def start_conversation(update: Update, context: CallbackContext) -> int:
-    for job in job_queue.jobs():
-        print(job.context)
-        print(job.name)
-        print(job.job_queue)
-        print(job.callback)
     context.user_data["meme_id"] = None
     context.bot.send_message(chat_id=update.effective_chat.id, text="Please, upload much SUS meme")
     return MEME
@@ -126,33 +136,22 @@ def review_start(update: Update, context: CallbackContext) -> int:
     return START
 
 
-def post_meme_on_schedule(context: CallbackContext):
-    message = context.job.context[0]
-    if message["anon"]:
-        tmp_caption = f"#Предложка от анонимуса"
-    else:
-        tmp_caption = f"#Предложка от @{message['username']}"
-    context.bot.send_photo(chat_id=CHEEKE_BREEKE,
-                           photo=message["meme"],
-                           caption=tmp_caption)
-
-
 def review_next(update: Update, context: CallbackContext) -> int:
     # Getting necessary data
     queued_memes = context.bot_data.get("queued_memes")
     posted_memes = context.bot_data.get("post_memes")
     current_meme = context.bot_data.get("current_meme")
-    print(posted_memes)
     if update.message.text == 'Approve':
         # Remove from queue and add to posts file
         queued_memes.pop(0)
         posted_memes = manage_meme_queue(posted_memes, current_meme)
         # Add new queued task
         post_time = datetime.datetime.strptime(posted_memes[-1]["post_time"], "%Y-%m-%d %H:%M:%S")
+        post_time = TIMEZONE.localize(post_time)
         job_queue.run_once(post_meme_on_schedule, post_time, context=(current_meme,))
         if current_meme["person_chat_id"] != ADMIN_CHAT:
             context.bot.send_message(chat_id=current_meme["person_chat_id"],
-                                     text="Congratulations, one of your memes has been approved")
+                                     text=f"Congratulations, one of your memes has been approved and will be posted at {post_time}")
     elif update.message.text == 'Decline':
         # Remove from queue file
         queued_memes.pop(0)
