@@ -40,15 +40,24 @@ def help_handler(update: Update, context: CallbackContext):
 
 
 def post_meme_on_schedule(context: CallbackContext):
-    logging.warning("TASK TRIGGERED")
     message = context.job.context[0]
     if message["anon"]:
         tmp_caption = f"#Предложка от анонимуса"
+    elif message["username"] == "pro100ton":
+        tmp_caption = ""
     else:
         tmp_caption = f"#Предложка от @{message['username']}"
-    context.bot.send_photo(chat_id=CHEEKE_BREEKE,
-                           photo=message["meme"],
-                           caption=tmp_caption)
+    context.bot.send_photo(chat_id=CHEEKE_BREEKE, photo=message["meme"], caption=tmp_caption)
+    # Delete post from json file with posts
+    with open('posts.json') as json_file:
+        json_data = json.load(json_file)
+        for element in json_data:
+            if element["meme"] == message["meme"]:
+                json_data.remove(element)
+                break
+    # Overwrite data in posts
+    with open('posts.json', 'w', encoding='utf-8') as json_file:
+        json.dump(json_data, json_file, ensure_ascii=False, default=str)
 
 
 def start_conversation(update: Update, context: CallbackContext) -> int:
